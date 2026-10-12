@@ -468,8 +468,6 @@ function App() {
             outgoing: isOwnMessage,
           });
 
-          // Ignore our own messages when calculating unread counts.
-          // Messages received in the open conversation are read.
           if (
             !isOwnMessage &&
             activeConversationRef.current !== conversationKey
@@ -614,17 +612,91 @@ function App() {
       return;
     }
 
+    // Slash commands: send to the backend and show feedback.
     if (text.startsWith("/")) {
+      const parts = text.split(/\s+/);
+      const command = parts[0].toLowerCase();
+
+      // Validate command usage before sending it.
+      if (command === "/pm") {
+        if (parts.length < 3 || !parts[1] || !parts.slice(2).join(" ").trim()) {
+          addSystemMessage(
+            "Usage: /pm username message"
+          );
+          return;
+        }
+
+        if (
+          normalizeName(parts[1]) === normalizeName(username)
+        ) {
+          addSystemMessage(
+            "You cannot send a private message to yourself."
+          );
+          return;
+        }
+      }
+
+      if (command === "/join" && !parts[1]) {
+        addSystemMessage("Usage: /join channel");
+        return;
+      }
+
       const sent = sendSocketMessage({
         type: "command",
         command: text,
       });
 
-      if (sent) setMessageInput("");
+      if (!sent) {
+        addSystemMessage(
+          "Command failed: the connection is unavailable."
+        );
+        return;
+      }
 
+      if (command === "/pm") {
+        const recipient = parts[1];
+        const privateText = parts.slice(2).join(" ");
+
+        // Show the outgoing message locally.
+        // The server's response is still needed to confirm delivery.
+        rememberConversation(recipient);
+
+        addMessage(getConversationKey(recipient), {
+          id: createId(),
+          type: "private",
+          username,
+          message: privateText,
+          timestamp: new Date().toTimeString().slice(0, 8),
+          outgoing: true,
+          pending: true,
+        });
+
+        addSystemMessage(
+          `Private message command sent to ${recipient}.`
+        );
+      } else if (command === "/join") {
+        const room = parts[1].replace(/^#/, "");
+
+        addSystemMessage(`Joining #${room}...`);
+      } else if (command === "/users") {
+        addSystemMessage("Requesting the online user list...");
+      } else if (command === "/rooms") {
+        addSystemMessage("Requesting the available channel list...");
+      } else if (command === "/help") {
+        addSystemMessage(
+          "Commands: /join channel, /pm username message, /users, /rooms, /help"
+        );
+      } else {
+        addSystemMessage(
+          `Command "${command}" sent to the server.`
+        );
+      }
+
+      setMessageInput("");
       return;
     }
 
+    // Send normal messages in the currently selected DM.
     if (activeDirectMessage) {
       if (
         normalizeName(activeDirectMessage) ===
@@ -657,6 +729,10 @@ function App() {
           }
         );
 
+        addSystemMessage(
+          `Private message command sent to ${activeDirectMessage}.`
+        );
+
         rememberConversation(activeDirectMessage);
         markConversationRead(activeDirectMessage);
 
@@ -666,12 +742,15 @@ function App() {
       return;
     }
 
+    // Send normal channel messages.
     const sent = sendSocketMessage({
       type: "chat",
       message: text,
     });
 
-    if (sent) setMessageInput("");
+    if (sent) {
+      setMessageInput("");
+    }
   };
 
   const handleComposerKeyDown = (event) => {
@@ -1211,7 +1290,7 @@ function App() {
 
                   {message.pending && (
                     <span className="message-delivery-status">
-                      Sent
+                      Pending server confirmation
                     </span>
                   )}
                 </div>
@@ -1235,7 +1314,7 @@ function App() {
                 addSystemMessage(
                   activeDirectMessage
                     ? `Private message to ${activeDirectMessage}.`
-                    : `Sending to #${activeRoom}. Use /users to list online users or /rooms to list channels.`
+                    : `Sending to #${activeRoom}. Use /users to list online users, /rooms to list channels, /join channel to switch channels, /pm username message to send a private message, or /help for commands.`
                 )
               }
             >

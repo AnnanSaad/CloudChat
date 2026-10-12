@@ -12,6 +12,8 @@ import {
   WifiOff,
   ArrowDownLeft,
   MoreHorizontal,
+  Menu,
+  X,
 } from "lucide-react";
 import "./App.css";
 
@@ -90,6 +92,8 @@ function App() {
   const [activeRoom, setActiveRoom] = useState("general");
   const [activeDirectMessage, setActiveDirectMessage] = useState(null);
 
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
   const [rooms, setRooms] = useState(INITIAL_ROOMS);
   const [members, setMembers] = useState([]);
   const [directConversations, setDirectConversations] = useState([]);
@@ -115,7 +119,6 @@ function App() {
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const intentionalCloseRef = useRef(false);
-
   const usernameRef = useRef(username);
   const activeConversationRef = useRef("general");
 
@@ -139,6 +142,15 @@ function App() {
     name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const totalUnreadCount = Object.values(unreadCounts).reduce(
+    (total, count) => total + count,
+    0
+  );
+
+  const memberCountLabel = `${members.length} ${
+    members.length === 1 ? "member" : "members"
+  } online`;
+
   useEffect(() => {
     usernameRef.current = username;
   }, [username]);
@@ -146,6 +158,35 @@ function App() {
   useEffect(() => {
     activeConversationRef.current = activeConversationKey;
   }, [activeConversationKey]);
+
+  // Close the mobile drawer when Escape is pressed.
+  useEffect(() => {
+    if (!mobileSidebarOpen) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setMobileSidebarOpen(false);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [mobileSidebarOpen]);
+
+  // Prevent the page behind the open mobile drawer from scrolling.
+  useEffect(() => {
+    if (!mobileSidebarOpen) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileSidebarOpen]);
 
   const addMessage = useCallback((key, message) => {
     setMessagesByRoom((previous) => ({
@@ -178,7 +219,9 @@ function App() {
           normalizeName(item) === normalizeName(name)
       );
 
-      if (existing) return previous;
+      if (existing) {
+        return previous;
+      }
 
       return [name, ...previous];
     });
@@ -224,18 +267,15 @@ function App() {
         return;
       }
 
-      if (cleanUsername.length > 24) {
+      if (!/^[A-Za-z0-9_.-]{1,24}$/.test(cleanUsername)) {
         setConnectionError(
-          "Username must be 24 characters or fewer."
+          "Use 1–24 letters, numbers, dots, hyphens, or underscores for your username."
         );
         return;
       }
 
-      if (socketRef.current?.readyState === WebSocket.OPEN) {
-        return;
-      }
-
       if (
+        socketRef.current?.readyState === WebSocket.OPEN ||
         socketRef.current?.readyState === WebSocket.CONNECTING
       ) {
         return;
@@ -317,18 +357,27 @@ function App() {
 
         if (data.type === "users") {
           const receivedUsers = Array.isArray(data.users)
-            ? data.users
+            ? data.users.filter(
+                (name) =>
+                  typeof name === "string" && name.trim()
+              )
             : [];
 
-          setMembers(
-            [
-              ...new Set(
-                receivedUsers.filter(
-                  (name) =>
-                    typeof name === "string" && name.trim()
-                )
-              ),
-            ].sort((a, b) => a.localeCompare(b))
+          const uniqueUsers = [
+            ...new Map(
+              receivedUsers.map((name) => [
+                normalizeName(name),
+                name.trim(),
+              ])
+            ).values(),
+          ].sort((a, b) => a.localeCompare(b));
+
+          setMembers(uniqueUsers);
+
+          addSystemMessage(
+            uniqueUsers.length
+              ? `Online users (${uniqueUsers.length}): ${uniqueUsers.join(", ")}`
+              : "No users are currently online."
           );
 
           return;
@@ -336,14 +385,27 @@ function App() {
 
         if (data.type === "rooms") {
           if (Array.isArray(data.rooms)) {
-            setRooms((previous) => [
+            const receivedRooms = data.rooms.filter(
+              (room) =>
+                typeof room === "string" && room.trim()
+            );
+
+            const uniqueRooms = [
               ...new Set([
                 ...INITIAL_ROOMS,
-                ...data.rooms.filter(
-                  (room) => typeof room === "string"
-                ),
+                ...receivedRooms,
               ]),
-            ]);
+            ];
+
+            setRooms(uniqueRooms);
+
+            addSystemMessage(
+              uniqueRooms.length
+                ? `Available channels (${uniqueRooms.length}): ${uniqueRooms
+                    .map((room) => `#${room}`)
+                    .join(", ")}`
+                : "No channels are currently available."
+            );
           }
 
           return;
@@ -487,7 +549,7 @@ function App() {
         if (socketRef.current !== socket) return;
 
         setConnectionError(
-          "Unable to reach the gateway. Make sure the Python server and WebSocket gateway are running."
+          "Unable to reach the gateway. Check the server and WebSocket gateway."
         );
 
         setConnecting(false);
@@ -509,12 +571,7 @@ function App() {
         }
       };
     },
-    [
-      activeRoom,
-      addMessage,
-      addSystemMessage,
-      rememberConversation,
-    ]
+    [activeRoom, addMessage, addSystemMessage, rememberConversation]
   );
 
   const disconnect = useCallback(() => {
@@ -557,25 +614,38 @@ function App() {
   }, []);
 
   const selectRoom = (room) => {
-    setActiveRoom(room);
+    const cleanRoom = room.trim().replace(/^#/, "");
+
+    if (!cleanRoom) return;
+
+    setActiveRoom(cleanRoom);
     setActiveDirectMessage(null);
     setActiveTab("channels");
+    setMobileSidebarOpen(false);
 
-    activeConversationRef.current = room;
+    activeConversationRef.current = cleanRoom;
+
+    setMessagesByRoom((previous) => ({
+      ...previous,
+      [cleanRoom]: previous[cleanRoom] || [],
+    }));
 
     if (connected) {
       sendSocketMessage({
         type: "command",
-        command: `/join ${room}`,
+        command: `/join ${cleanRoom}`,
       });
     }
   };
 
   const selectConversation = (name) => {
+    if (!name) return;
+
     const key = getConversationKey(name);
 
     setActiveDirectMessage(name);
     setActiveTab("messages");
+    setMobileSidebarOpen(false);
 
     activeConversationRef.current = key;
 
@@ -612,17 +682,17 @@ function App() {
       return;
     }
 
-    // Slash commands: send to the backend and show feedback.
     if (text.startsWith("/")) {
       const parts = text.split(/\s+/);
       const command = parts[0].toLowerCase();
 
-      // Validate command usage before sending it.
       if (command === "/pm") {
-        if (parts.length < 3 || !parts[1] || !parts.slice(2).join(" ").trim()) {
-          addSystemMessage(
-            "Usage: /pm username message"
-          );
+        if (
+          parts.length < 3 ||
+          !parts[1] ||
+          !parts.slice(2).join(" ").trim()
+        ) {
+          addSystemMessage("Usage: /pm username message");
           return;
         }
 
@@ -641,6 +711,17 @@ function App() {
         return;
       }
 
+      if (command === "/join") {
+        const room = parts[1].replace(/^#/, "");
+
+        if (!/^[a-zA-Z0-9_-]{1,30}$/.test(room)) {
+          addSystemMessage(
+            "Invalid channel name. Use letters, numbers, hyphens, or underscores."
+          );
+          return;
+        }
+      }
+
       const sent = sendSocketMessage({
         type: "command",
         command: text,
@@ -657,8 +738,6 @@ function App() {
         const recipient = parts[1];
         const privateText = parts.slice(2).join(" ");
 
-        // Show the outgoing message locally.
-        // The server's response is still needed to confirm delivery.
         rememberConversation(recipient);
 
         addMessage(getConversationKey(recipient), {
@@ -676,6 +755,23 @@ function App() {
         );
       } else if (command === "/join") {
         const room = parts[1].replace(/^#/, "");
+
+        setActiveRoom(room);
+        setActiveDirectMessage(null);
+        setActiveTab("channels");
+        setMobileSidebarOpen(false);
+        activeConversationRef.current = room;
+
+        setRooms((previous) =>
+          previous.includes(room)
+            ? previous
+            : [...previous, room]
+        );
+
+        setMessagesByRoom((previous) => ({
+          ...previous,
+          [room]: previous[room] || [],
+        }));
 
         addSystemMessage(`Joining #${room}...`);
       } else if (command === "/users") {
@@ -696,7 +792,6 @@ function App() {
       return;
     }
 
-    // Send normal messages in the currently selected DM.
     if (activeDirectMessage) {
       if (
         normalizeName(activeDirectMessage) ===
@@ -721,9 +816,7 @@ function App() {
             type: "private",
             username,
             message: text,
-            timestamp: new Date()
-              .toTimeString()
-              .slice(0, 8),
+            timestamp: new Date().toTimeString().slice(0, 8),
             outgoing: true,
             pending: true,
           }
@@ -742,7 +835,6 @@ function App() {
       return;
     }
 
-    // Send normal channel messages.
     const sent = sendSocketMessage({
       type: "chat",
       message: text,
@@ -760,8 +852,7 @@ function App() {
     }
   };
 
-  const activeTitle =
-    activeDirectMessage || activeRoom;
+  const activeTitle = activeDirectMessage || activeRoom;
 
   const activeDescription = activeDirectMessage
     ? `Private conversation with ${activeDirectMessage}`
@@ -773,18 +864,23 @@ function App() {
           ? "Anything that doesn't fit elsewhere"
           : `Welcome to the #${activeRoom} channel`;
 
-  const totalUnreadCount = Object.values(
-    unreadCounts
-  ).reduce((total, count) => total + count, 0);
-
-  const memberCountLabel =
-    `${members.length} ${
-      members.length === 1 ? "member" : "members"
-    } online`;
-
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      {mobileSidebarOpen && (
+        <button
+          type="button"
+          className="mobile-sidebar-overlay"
+          aria-label="Close navigation menu"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
+
+      <aside
+        className={`sidebar ${
+          mobileSidebarOpen ? "mobile-sidebar-open" : ""
+        }`}
+        aria-label="Workspace navigation"
+      >
         <div className="brand">
           <div className="brand-icon">
             <Zap size={20} />
@@ -796,19 +892,23 @@ function App() {
               TEAM WORKSPACE
             </span>
           </div>
+
+          <button
+            type="button"
+            className="mobile-menu-button sidebar-close-button"
+            aria-label="Close navigation menu"
+            onClick={() => setMobileSidebarOpen(false)}
+          >
+            <X size={19} />
+          </button>
         </div>
 
-        <button
-          className="workspace-selector"
-          type="button"
-        >
+        <button className="workspace-selector" type="button">
           <div className="workspace-avatar">C</div>
 
           <div className="workspace-info">
             <strong>CloudChat HQ</strong>
-            <span>
-              {connected ? "Connected" : "Workspace"}
-            </span>
+            <span>{connected ? "Connected" : "Workspace"}</span>
           </div>
 
           <MoreHorizontal size={18} />
@@ -821,9 +921,7 @@ function App() {
             type="search"
             placeholder="Search..."
             value={searchQuery}
-            onChange={(event) =>
-              setSearchQuery(event.target.value)
-            }
+            onChange={(event) => setSearchQuery(event.target.value)}
           />
 
           <kbd>/</kbd>
@@ -832,13 +930,12 @@ function App() {
         <div className="sidebar-tabs">
           <button
             type="button"
-            className={
-              activeTab === "channels" ? "active" : ""
-            }
+            className={activeTab === "channels" ? "active" : ""}
             onClick={() => {
               setActiveTab("channels");
               setActiveDirectMessage(null);
               activeConversationRef.current = activeRoom;
+              setMobileSidebarOpen(false);
             }}
           >
             <Hash size={16} />
@@ -847,19 +944,18 @@ function App() {
 
           <button
             type="button"
-            className={
-              activeTab === "messages" ? "active" : ""
-            }
-            onClick={() => setActiveTab("messages")}
+            className={activeTab === "messages" ? "active" : ""}
+            onClick={() => {
+              setActiveTab("messages");
+              setMobileSidebarOpen(false);
+            }}
           >
             <MessageCircle size={16} />
             Messages
 
             {totalUnreadCount > 0 && (
               <span className="tab-count">
-                {totalUnreadCount > 99
-                  ? "99+"
-                  : totalUnreadCount}
+                {totalUnreadCount > 99 ? "99+" : totalUnreadCount}
               </span>
             )}
           </button>
@@ -874,6 +970,7 @@ function App() {
                 type="button"
                 className="icon-button"
                 title="Create a channel"
+                aria-label="Create a channel"
                 onClick={() => {
                   const roomName = window.prompt(
                     "Enter a channel name (letters, numbers, - or _):"
@@ -886,9 +983,7 @@ function App() {
                     .toLowerCase()
                     .replace(/\s+/g, "-");
 
-                  if (
-                    !/^[a-z0-9_-]{1,30}$/.test(cleanRoom)
-                  ) {
+                  if (!/^[a-z0-9_-]{1,30}$/.test(cleanRoom)) {
                     window.alert(
                       "Use 1–30 letters, numbers, hyphens, or underscores."
                     );
@@ -903,8 +998,7 @@ function App() {
 
                   setMessagesByRoom((previous) => ({
                     ...previous,
-                    [cleanRoom]:
-                      previous[cleanRoom] || [],
+                    [cleanRoom]: previous[cleanRoom] || [],
                   }));
 
                   selectRoom(cleanRoom);
@@ -920,8 +1014,7 @@ function App() {
                   type="button"
                   key={room}
                   className={`channel-item ${
-                    activeRoom === room &&
-                    !activeDirectMessage
+                    activeRoom === room && !activeDirectMessage
                       ? "active"
                       : ""
                   }`}
@@ -933,9 +1026,7 @@ function App() {
               ))}
 
               {filteredRooms.length === 0 && (
-                <p className="empty-state">
-                  No matching channels.
-                </p>
+                <p className="empty-state">No matching channels.</p>
               )}
             </div>
           </div>
@@ -948,23 +1039,19 @@ function App() {
             <div className="channel-list">
               {filteredConversations.map((name) => {
                 const unread =
-                  unreadCounts[getConversationKey(name)] ||
-                  0;
+                  unreadCounts[getConversationKey(name)] || 0;
 
                 return (
                   <button
                     type="button"
                     key={normalizeName(name)}
                     className={`channel-item dm-item ${
-                      normalizeName(
-                        activeDirectMessage || ""
-                      ) === normalizeName(name)
+                      normalizeName(activeDirectMessage || "") ===
+                      normalizeName(name)
                         ? "active"
                         : ""
                     }`}
-                    onClick={() =>
-                      selectConversation(name)
-                    }
+                    onClick={() => selectConversation(name)}
                   >
                     <span className="small-avatar">
                       {getInitials(name)}
@@ -985,8 +1072,8 @@ function App() {
 
               {filteredConversations.length === 0 && (
                 <p className="empty-state">
-                  No conversations yet. Select someone from
-                  Members to start a private chat.
+                  No conversations yet. Select someone from Members
+                  to start a private chat.
                 </p>
               )}
 
@@ -999,16 +1086,13 @@ function App() {
                   type="button"
                   className="channel-item dm-item"
                   key={normalizeName(name)}
-                  onClick={() =>
-                    openMemberConversation(name)
-                  }
+                  onClick={() => openMemberConversation(name)}
                 >
                   <span className="small-avatar">
                     {getInitials(name)}
                   </span>
 
                   <span>{name}</span>
-
                   <span className="online-dot" />
                 </button>
               ))}
@@ -1030,13 +1114,13 @@ function App() {
             type="button"
             className="icon-button settings-button"
             title="Connection settings"
+            aria-label="Connection settings"
             onClick={() => {
               if (connected) {
                 disconnect();
               } else {
-                document
-                  .getElementById("username-input")
-                  ?.focus();
+                document.getElementById("username-input")?.focus();
+                setMobileSidebarOpen(false);
               }
             }}
           >
@@ -1047,6 +1131,16 @@ function App() {
 
       <main className="chat-panel">
         <header className="chat-header">
+          <button
+            type="button"
+            className="mobile-menu-button"
+            aria-label="Open navigation menu"
+            aria-expanded={mobileSidebarOpen}
+            onClick={() => setMobileSidebarOpen((open) => !open)}
+          >
+            <Menu size={20} />
+          </button>
+
           <div className="chat-header-title">
             <div className="title-icon">
               {activeDirectMessage ? (
@@ -1067,46 +1161,19 @@ function App() {
             </div>
           </div>
 
-          <div
-            className="header-actions"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "16px",
-            }}
-          >
+          <div className="header-actions">
             <div
               className={`connection-status ${
-                connected
-                  ? "connected"
-                  : "disconnected"
+                connected ? "online" : "disconnected"
               }`}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px",
-              }}
             >
-              {connected ? (
-                <Wifi size={15} />
-              ) : (
-                <WifiOff size={15} />
-              )}
-
-              <span>
-                {connected ? "Live" : "Offline"}
-              </span>
+              {connected ? <Wifi size={15} /> : <WifiOff size={15} />}
+              <span>{connected ? "Live" : "Offline"}</span>
             </div>
 
             <div
               className="header-members"
               title="Total connected workspace members"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "7px",
-                whiteSpace: "nowrap",
-              }}
             >
               <Users size={16} />
               <span>{memberCountLabel}</span>
@@ -1116,12 +1183,15 @@ function App() {
 
         {!connected && (
           <div className="connection-banner">
-            <div className="banner-copy">
-              <strong>Connect to CloudChat</strong>
+            <div className="banner-icon">
+              <Zap size={19} />
+            </div>
 
+            <div className="banner-text">
+              <strong>Connect to CloudChat</strong>
               <span>
-                Enter a username to join the workspace and
-                start chatting.
+                Enter a username to join the workspace and start
+                chatting.
               </span>
             </div>
 
@@ -1135,9 +1205,7 @@ function App() {
               <input
                 id="username-input"
                 value={usernameInput}
-                onChange={(event) =>
-                  setUsernameInput(event.target.value)
-                }
+                onChange={(event) => setUsernameInput(event.target.value)}
                 placeholder="Your username"
                 maxLength={24}
                 autoComplete="nickname"
@@ -1145,9 +1213,7 @@ function App() {
               />
 
               <button type="submit" disabled={connecting}>
-                {connecting
-                  ? "Connecting..."
-                  : "Connect"}
+                {connecting ? "Connecting..." : "Connect"}
               </button>
             </form>
           </div>
@@ -1181,37 +1247,29 @@ function App() {
                 <strong>#{activeRoom}</strong> channel.
               </p>
 
-              <div className="divider">
-                <span />
-                <small>MESSAGES</small>
-                <span />
+              <div className="intro-divider">
+                <span>MESSAGES</span>
               </div>
             </div>
           )}
 
-          {activeDirectMessage &&
-            activeMessages.length === 0 && (
-              <div className="channel-intro direct-intro">
-                <div className="intro-hash">
-                  <MessageCircle size={26} />
-                </div>
-
-                <h2>
-                  Chat with {activeDirectMessage}
-                </h2>
-
-                <p>
-                  This is the beginning of your private
-                  conversation. Say hello!
-                </p>
+          {activeDirectMessage && activeMessages.length === 0 && (
+            <div className="channel-intro direct-intro">
+              <div className="intro-hash">
+                <MessageCircle size={26} />
               </div>
-            )}
+
+              <h2>Chat with {activeDirectMessage}</h2>
+
+              <p>
+                This is the beginning of your private conversation.
+                Say hello!
+              </p>
+            </div>
+          )}
 
           {systemMessages.map((message) => (
-            <div
-              className="system-message"
-              key={message.id}
-            >
+            <div className="system-message" key={message.id}>
               <span>{message.message}</span>
 
               {message.timestamp && (
@@ -1222,8 +1280,7 @@ function App() {
 
           {activeMessages.map((message) => {
             const isOwnMessage =
-              normalizeName(message.username) ===
-              normalizeName(username);
+              normalizeName(message.username) === normalizeName(username);
 
             return (
               <article
@@ -1234,49 +1291,17 @@ function App() {
               >
                 <div
                   className={`message-avatar ${
-                    message.type === "private"
-                      ? "private-avatar"
-                      : ""
+                    message.type === "private" ? "private-avatar" : ""
                   }`}
                 >
                   {getInitials(message.username)}
                 </div>
 
-                <div
-                  className="message-content"
-                  style={{
-                    minWidth: 0,
-                    flex: 1,
-                  }}
-                >
-                  <div
-                    className="message-meta"
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                      width: "100%",
-                      minWidth: 0,
-                    }}
-                  >
-                    <strong
-                      style={{
-                        flexShrink: 0,
-                      }}
-                    >
-                      {message.username}
-                    </strong>
+                <div className="message-content">
+                  <div className="message-meta">
+                    <strong>{message.username}</strong>
 
-                    <time
-                      style={{
-                        marginLeft: "auto",
-                        flexShrink: 0,
-                        whiteSpace: "nowrap",
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {formatTime(message.timestamp)}
-                    </time>
+                    <time>{formatTime(message.timestamp)}</time>
 
                     {message.type === "private" && (
                       <span className="private-label">
@@ -1302,14 +1327,12 @@ function App() {
         </section>
 
         <div className="composer-area">
-          <form
-            className="composer"
-            onSubmit={sendMessage}
-          >
+          <form className="composer" onSubmit={sendMessage}>
             <button
               type="button"
               className="composer-plus"
               title="Message tips"
+              aria-label="Show message tips"
               onClick={() =>
                 addSystemMessage(
                   activeDirectMessage
@@ -1324,9 +1347,7 @@ function App() {
             <input
               ref={inputRef}
               value={messageInput}
-              onChange={(event) =>
-                setMessageInput(event.target.value)
-              }
+              onChange={(event) => setMessageInput(event.target.value)}
               onKeyDown={handleComposerKeyDown}
               placeholder={
                 connected
@@ -1343,9 +1364,7 @@ function App() {
             <button
               type="submit"
               className="send-button"
-              disabled={
-                !connected || !messageInput.trim()
-              }
+              disabled={!connected || !messageInput.trim()}
               title="Send message"
               aria-label="Send message"
             >
@@ -1366,31 +1385,23 @@ function App() {
       <aside className="members-panel">
         <div className="members-header">
           <div>
-            <h2>Members</h2>
+            <h3>Members</h3>
             <p>People in your workspace</p>
           </div>
 
-          <span className="members-count">
-            {members.length}
-          </span>
+          <span className="members-count">{members.length}</span>
         </div>
 
-        <div className="member-group">
-          <div className="member-group-heading">
-            <span className="online-indicator" />
+        <div className="members-group">
+          <div className="members-group-title">
             <span>ONLINE</span>
-
-            <span className="group-count">
-              {members.length}
-            </span>
           </div>
 
           {members.length > 0 ? (
             <div className="member-list">
               {members.map((name) => {
                 const isSelf =
-                  normalizeName(name) ===
-                  normalizeName(username);
+                  normalizeName(name) === normalizeName(username);
 
                 return (
                   <button
@@ -1399,9 +1410,7 @@ function App() {
                       isSelf ? "current-user" : ""
                     }`}
                     key={normalizeName(name)}
-                    onClick={() =>
-                      openMemberConversation(name)
-                    }
+                    onClick={() => openMemberConversation(name)}
                     title={
                       isSelf
                         ? "You"
@@ -1410,18 +1419,12 @@ function App() {
                   >
                     <div className="member-avatar">
                       {getInitials(name)}
-
-                      <span className="member-online-dot" />
+                      <span />
                     </div>
 
                     <div className="member-info">
                       <strong>{name}</strong>
-
-                      <span>
-                        {isSelf
-                          ? "You · Online"
-                          : "Online"}
-                      </span>
+                      <span>{isSelf ? "You · Online" : "Online"}</span>
                     </div>
 
                     {!isSelf && (
@@ -1435,50 +1438,37 @@ function App() {
               })}
             </div>
           ) : (
-            <div className="empty-members">
-              <div className="empty-members-icon">
-                <Users size={22} />
-              </div>
-
+            <div className="members-empty">
               <strong>No members yet</strong>
 
               <p>
-                Online users will appear here when the
-                server sends the user list.
+                Online users will appear here when the server sends
+                the user list.
               </p>
 
               {!connected && (
-                <span className="members-offline-note">
-                  Connect to view members.
-                </span>
+                <span>Connect to view members.</span>
               )}
             </div>
           )}
         </div>
 
         <div className="server-card">
-          <div className="server-card-heading">
-            <div className="server-icon">
-              <Zap size={16} />
-            </div>
-
-            <div>
-              <strong>CloudChat Server</strong>
-
-              <span>
-                Python TCP sockets · Multi-threaded
-                messaging
-              </span>
-            </div>
+          <div className="server-card-icon">
+            <Zap size={16} />
           </div>
+
+          <strong>CloudChat Server</strong>
+
+          <p>
+            Python TCP sockets · Multi-threaded messaging
+          </p>
 
           <div className="server-card-status">
             <span
-              className={
-                connected
-                  ? "status-dot online"
-                  : "status-dot"
-              }
+              className={`status-dot ${
+                connected ? "online" : ""
+              }`}
             />
 
             <span>

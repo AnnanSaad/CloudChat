@@ -15,49 +15,58 @@ rooms = {"general": set()}
 
 lock = threading.RLock()
 
-# Accept ordinary usernames, not HTTP request lines or header values.
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,24}$")
+ROOM_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,30}$")
+MAX_MESSAGE_LENGTH = 2000
 
 
 def timestamp():
     return datetime.now().strftime("%H:%M:%S")
 
 
+def make_event(event_type, **fields):
+    return {
+        "type": event_type,
+        **fields,
+        "timestamp": timestamp(),
+    }
+
+
+def system_message(message):
+    return make_event("system", message=message)
+
+
 def send_message(client, data):
-    """Send one JSON event to a client."""
+    """Send a newline-delimited JSON event to a TCP client."""
     try:
-        payload = json.dumps(data) + "\n"
+        payload = json.dumps(data, ensure_ascii=False) + "\n"
         client.sendall(payload.encode("utf-8"))
         return True
     except (OSError, ConnectionError):
         return False
 
 
-def system_message(message):
-    return {
-        "type": "system",
-        "message": message,
-        "timestamp": timestamp(),
-    }
-
-
 def get_online_users():
-    """Return a snapshot of connected usernames."""
     with lock:
         return sorted(clients.values(), key=str.lower)
 
 
-def broadcast(data, room="general"):
-    """Broadcast an event to everyone in a room."""
+def get_available_rooms():
+    with lock:
+        return sorted(rooms.keys())
+
+
+def broadcast(data, room="general", exclude=None):
+    """Broadcast an event to a room, optionally excluding one socket."""
     with lock:
         recipients = list(rooms.get(room, set()))
 
     for client in recipients:
-        send_message(client, data)
+        if client is not exclude:
+            send_message(client, data)
 
 
 def broadcast_all(data):
-    """Broadcast an event to every connected client."""
     with lock:
         recipients = list(clients.keys())
 
@@ -66,31 +75,229 @@ def broadcast_all(data):
 
 
 def broadcast_user_list():
-    """Synchronize the online-user list across all clients."""
     users = get_online_users()
 
-    event = {
-        "type": "users",
-        "users": users,
-        "count": len(users),
-        "timestamp": timestamp(),
-    }
-
-    broadcast_all(event)
+    broadcast_all(
+        make_event(
+            "users",
+            users=users,
+            count=len(users),
+        )
+    )
 
 
 def broadcast_room_list():
-    """Synchronize available rooms across all connected clients."""
+    broadcast_all(
+        make_event(
+            "rooms",
+            rooms=get_available_rooms(),
+        )
+    )
+
+
+def find_client_by_username(username):
     with lock:
-        available_rooms = sorted(rooms.keys())
+        for client, existing_name in clients.items():
+            if existing_name.casefold() == username.casefold():
+                return client, existing_name
 
-    event = {
-        "type": "rooms",
-        "rooms": available_rooms,
-        "timestamp": timestamp(),
-    }
+    return None, None
 
-    broadcast_all(event)
+
+def handle_users_command(client):
+    users = get_online_users()
+
+    send_message(
+        client,
+        make_event(
+            "users",
+            users=users,
+            count=len(users),
+        ),
+    )
+
+
+def handle_rooms_command(client):
+    send_message(
+        client,
+        make_event(
+            "rooms",
+            rooms=get_available_rooms(),
+        ),
+    )
+
+
+def handle_private_message(client, username, command):
+    parts = command.split(" ", 2)
+
+    if len(parts) < 3 or not parts[1].strip() or not parts[2].strip():
+        send_message(
+            client,
+            system_message("Usage: /pm username message"),
+        )
+        return
+
+    target_username = parts[1].strip()
+    private_text = parts[2].strip()
+
+    if len(private_text) > MAX_MESSAGE_LENGTH:
+        send_message(
+            client,
+            system_message(
+                f"Private messages must be {MAX_MESSAGE_LENGTH} "
+                "characters or fewer."
+            ),
+        )
+        return
+
+    target_client, actual_target_name = find_client_by_username(
+        target_username
+    )
+
+    if target_client is None:
+        send_message(
+            client,
+            system_message(f"User not found: {target_username}"),
+        )
+        return
+
+    if target_client is client:
+        send_message(
+            client,
+            system_message("You cannot send a private message to yourself."),
+        )
+        return
+
+    delivered = send_message(
+        target_client,
+        make_event(
+            "private",
+            username=username,
+            recipient=actual_target_name,
+            message=private_text,
+        ),
+    )
+
+    if delivered:
+        send_message(
+            client,
+            system_message(f"Private message sent to {actual_target_name}"),
+        )
+
+        print(
+            f"[PRIVATE] {username} -> "
+            f"{actual_target_name}: {private_text}"
+        )
+    else:
+        send_message(
+            client,
+            system_message("Could not deliver the private message."),
+        )
+
+
+def handle_join_command(client, username, command, current_room):
+    parts = command.split(" ", 1)
+
+    if len(parts) < 2 or not parts[1].strip():
+        send_message(client, system_message("Usage: /join room-name"))
+        return current_room
+
+    new_room = parts[1].strip()
+
+    if not ROOM_PATTERN.fullmatch(new_room):
+        send_message(
+            client,
+            system_message(
+                "Room names must contain 1-30 letters, numbers, "
+                "hyphens, or underscores."
+            ),
+        )
+        return current_room
+
+    new_room = new_room.lower()
+    room_created = False
+
+    with lock:
+        if new_room not in rooms:
+            rooms[new_room] = set()
+            room_created = True
+
+        rooms.setdefault(current_room, set()).discard(client)
+        rooms[new_room].add(client)
+
+    previous_room = current_room
+
+    send_message(
+        client,
+        system_message(f"You joined room: {new_room}"),
+    )
+
+    broadcast(
+        system_message(f"{username} joined #{new_room}"),
+        new_room,
+    )
+
+    print(f"[ROOM] {username}: #{previous_room} -> #{new_room}")
+
+    if room_created:
+        broadcast_room_list()
+
+    return new_room
+
+
+def handle_command(client, username, command, current_room):
+    """Handle one plain-text command from a connected client."""
+    if command == "/users":
+        handle_users_command(client)
+        return current_room
+
+    if command == "/rooms":
+        handle_rooms_command(client)
+        return current_room
+
+    if command.startswith("/pm "):
+        handle_private_message(client, username, command)
+        return current_room
+
+    if command == "/pm":
+        send_message(
+            client,
+            system_message("Usage: /pm username message"),
+        )
+        return current_room
+
+    if command.startswith("/join ") or command == "/join":
+        return handle_join_command(
+            client,
+            username,
+            command,
+            current_room,
+        )
+
+    if command == "/help":
+        send_message(
+            client,
+            system_message(
+                "Commands: /users, /rooms, /join room-name, "
+                "/pm username message, /help, /quit"
+            ),
+        )
+        return current_room
+
+    if command == "/quit":
+        return None
+
+    if command.startswith("/"):
+        send_message(
+            client,
+            system_message(
+                f"Unknown command: {command.split(' ', 1)[0]}. "
+                "Type /help for available commands."
+            ),
+        )
+        return current_room
+
+    return current_room
 
 
 def handle_client(client, address):
@@ -102,11 +309,9 @@ def handle_client(client, address):
     try:
         reader = client.makefile("r", encoding="utf-8")
 
-        # The first line received from a client is its username.
+        # The first TCP line is the username handshake.
         username = reader.readline().strip()
 
-        # Reject HTTP requests, header values, and malformed usernames
-        # before they can be registered or broadcast to chat users.
         if not USERNAME_PATTERN.fullmatch(username):
             print(
                 f"[REJECTED] Invalid username/request from "
@@ -114,10 +319,9 @@ def handle_client(client, address):
             )
             return
 
-        # Register the user and join the default room atomically.
         with lock:
             duplicate = any(
-                existing.lower() == username.lower()
+                existing.casefold() == username.casefold()
                 for existing in clients.values()
             )
 
@@ -154,193 +358,40 @@ def handle_client(client, address):
             if not message:
                 continue
 
-            if len(message) > 2000:
+            if len(message) > MAX_MESSAGE_LENGTH:
                 send_message(
                     client,
                     system_message(
-                        "Messages must be 2000 characters or fewer."
+                        f"Messages must be {MAX_MESSAGE_LENGTH} "
+                        "characters or fewer."
                     ),
                 )
                 continue
 
-            # LIST ONLINE USERS
-            if message == "/users":
-                users = get_online_users()
-
-                send_message(
+            if message.startswith("/"):
+                next_room = handle_command(
                     client,
-                    {
-                        "type": "users",
-                        "users": users,
-                        "count": len(users),
-                        "timestamp": timestamp(),
-                    },
-                )
-
-            # PRIVATE MESSAGING
-            elif message.startswith("/pm "):
-                parts = message.split(" ", 2)
-
-                if len(parts) < 3 or not parts[2].strip():
-                    send_message(
-                        client,
-                        system_message(
-                            "Usage: /pm username message"
-                        ),
-                    )
-                    continue
-
-                target_username = parts[1].strip()
-                private_text = parts[2].strip()
-
-                with lock:
-                    target_client = next(
-                        (
-                            sock
-                            for sock, name in clients.items()
-                            if name.lower() == target_username.lower()
-                        ),
-                        None,
-                    )
-
-                    actual_target_name = (
-                        clients.get(target_client)
-                        if target_client is not None
-                        else None
-                    )
-
-                if target_client is None:
-                    send_message(
-                        client,
-                        system_message("User not found!"),
-                    )
-                    continue
-
-                delivered = send_message(
-                    target_client,
-                    {
-                        "type": "private",
-                        "username": username,
-                        "recipient": actual_target_name,
-                        "message": private_text,
-                        "timestamp": timestamp(),
-                    },
-                )
-
-                if delivered:
-                    send_message(
-                        client,
-                        system_message(
-                            f"Private message sent to {actual_target_name}"
-                        ),
-                    )
-
-                    print(
-                        f"[PRIVATE] {username} -> "
-                        f"{actual_target_name}: {private_text}"
-                    )
-                else:
-                    send_message(
-                        client,
-                        system_message(
-                            "Could not deliver the private message."
-                        ),
-                    )
-
-            # JOIN CHAT ROOM
-            elif message.startswith("/join "):
-                new_room = message.split(" ", 1)[1].strip()
-
-                if not new_room:
-                    send_message(
-                        client,
-                        system_message("Room name required."),
-                    )
-                    continue
-
-                if len(new_room) > 30 or not all(
-                    char.isalnum() or char in "_-"
-                    for char in new_room
-                ):
-                    send_message(
-                        client,
-                        system_message(
-                            "Room names may contain letters, "
-                            "numbers, hyphens and underscores."
-                        ),
-                    )
-                    continue
-
-                new_room = new_room.lower()
-                room_created = False
-
-                with lock:
-                    if new_room not in rooms:
-                        rooms[new_room] = set()
-                        room_created = True
-
-                    rooms[current_room].discard(client)
-                    rooms[new_room].add(client)
-
-                previous_room = current_room
-                current_room = new_room
-
-                send_message(
-                    client,
-                    system_message(
-                        f"You joined room: {current_room}"
-                    ),
-                )
-
-                broadcast(
-                    system_message(
-                        f"{username} joined #{current_room}"
-                    ),
+                    username,
+                    message,
                     current_room,
                 )
 
-                print(
-                    f"[ROOM] {username}: "
-                    f"#{previous_room} -> #{current_room}"
-                )
+                if next_room is None:
+                    break
 
-                if room_created:
-                    broadcast_room_list()
+                current_room = next_room
+                continue
 
-            # LIST ROOMS
-            elif message == "/rooms":
-                with lock:
-                    available_rooms = sorted(rooms.keys())
+            event = make_event(
+                "chat",
+                username=username,
+                message=message,
+                room=current_room,
+            )
 
-                send_message(
-                    client,
-                    {
-                        "type": "rooms",
-                        "rooms": available_rooms,
-                        "timestamp": timestamp(),
-                    },
-                )
+            broadcast(event, current_room)
 
-            # DISCONNECT
-            elif message == "/quit":
-                break
-
-            # PUBLIC GROUP MESSAGING
-            else:
-                data = {
-                    "type": "chat",
-                    "username": username,
-                    "message": message,
-                    "room": current_room,
-                    "timestamp": timestamp(),
-                }
-
-                broadcast(data, current_room)
-
-                print(
-                    f"[{current_room}] "
-                    f"{username}: {message}"
-                )
+            print(f"[{current_room}] {username}: {message}")
 
     except (OSError, UnicodeError, ConnectionError) as error:
         print(f"[ERROR] {username or address}: {error}")
@@ -375,10 +426,7 @@ def handle_client(client, address):
 
 
 def start_server():
-    server = socket.socket(
-        socket.AF_INET,
-        socket.SOCK_STREAM,
-    )
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     server.setsockopt(
         socket.SOL_SOCKET,
@@ -404,7 +452,6 @@ def start_server():
                 args=(client, address),
                 daemon=True,
             )
-
             thread.start()
 
     except KeyboardInterrupt:

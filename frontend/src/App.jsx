@@ -1,4 +1,3 @@
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Hash,
@@ -18,6 +17,7 @@ import "./App.css";
 
 const WS_URL =
   import.meta.env.VITE_WS_URL || "ws://127.0.0.1:8765";
+
 const INITIAL_ROOMS = ["general", "developers", "random"];
 
 const INITIAL_MESSAGES = {
@@ -43,6 +43,7 @@ function formatTime(value) {
     return new Date().toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
+      hour12: false,
     });
   }
 
@@ -56,6 +57,7 @@ function formatTime(value) {
     return date.toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
+      hour12: false,
     });
   }
 
@@ -83,16 +85,20 @@ function App() {
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectionError, setConnectionError] = useState("");
+
   const [activeTab, setActiveTab] = useState("channels");
   const [activeRoom, setActiveRoom] = useState("general");
   const [activeDirectMessage, setActiveDirectMessage] = useState(null);
+
   const [rooms, setRooms] = useState(INITIAL_ROOMS);
   const [members, setMembers] = useState([]);
   const [directConversations, setDirectConversations] = useState([]);
   const [unreadCounts, setUnreadCounts] = useState({});
+
   const [messagesByRoom, setMessagesByRoom] = useState(() => ({
     ...INITIAL_MESSAGES,
   }));
+
   const [messageInput, setMessageInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -117,10 +123,12 @@ function App() {
     ? getConversationKey(activeDirectMessage)
     : activeRoom;
 
-  const activeMessages = messagesByRoom[activeConversationKey] || [];
+  const activeMessages =
+    messagesByRoom[activeConversationKey] || [];
 
   const onlineMembers = members.filter(
-    (member) => normalizeName(member) !== normalizeName(username)
+    (member) =>
+      normalizeName(member) !== normalizeName(username)
   );
 
   const filteredRooms = rooms.filter((room) =>
@@ -146,24 +154,28 @@ function App() {
     }));
   }, []);
 
-  const addSystemMessage = useCallback((message, timestamp = "") => {
-    setSystemMessages((previous) => [
-      ...previous.slice(-99),
-      {
-        id: createId(),
-        type: "system",
-        message,
-        timestamp,
-      },
-    ]);
-  }, []);
+  const addSystemMessage = useCallback(
+    (message, timestamp = "") => {
+      setSystemMessages((previous) => [
+        ...previous.slice(-99),
+        {
+          id: createId(),
+          type: "system",
+          message,
+          timestamp,
+        },
+      ]);
+    },
+    []
+  );
 
   const rememberConversation = useCallback((name) => {
     if (!name) return;
 
     setDirectConversations((previous) => {
       const existing = previous.find(
-        (item) => normalizeName(item) === normalizeName(name)
+        (item) =>
+          normalizeName(item) === normalizeName(name)
       );
 
       if (existing) return previous;
@@ -195,7 +207,9 @@ function App() {
     }
 
     socket.send(
-      typeof payload === "string" ? payload : JSON.stringify(payload)
+      typeof payload === "string"
+        ? payload
+        : JSON.stringify(payload)
     );
 
     return true;
@@ -211,12 +225,21 @@ function App() {
       }
 
       if (cleanUsername.length > 24) {
-        setConnectionError("Username must be 24 characters or fewer.");
+        setConnectionError(
+          "Username must be 24 characters or fewer."
+        );
         return;
       }
 
-      if (socketRef.current?.readyState === WebSocket.OPEN) return;
-      if (socketRef.current?.readyState === WebSocket.CONNECTING) return;
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        return;
+      }
+
+      if (
+        socketRef.current?.readyState === WebSocket.CONNECTING
+      ) {
+        return;
+      }
 
       setConnecting(true);
       setConnectionError("");
@@ -228,7 +251,9 @@ function App() {
         socket = new WebSocket(WS_URL);
       } catch {
         setConnecting(false);
-        setConnectionError("Could not connect to the CloudChat gateway.");
+        setConnectionError(
+          "Could not connect to the CloudChat gateway."
+        );
         return;
       }
 
@@ -241,9 +266,14 @@ function App() {
         socket.send(cleanUsername);
 
         usernameRef.current = cleanUsername;
+
         setUsername(cleanUsername);
         setUsernameInput(cleanUsername);
-        localStorage.setItem("cloudchat_username", cleanUsername);
+
+        localStorage.setItem(
+          "cloudchat_username",
+          cleanUsername
+        );
 
         setConnected(true);
         setConnecting(false);
@@ -279,7 +309,9 @@ function App() {
         try {
           data = JSON.parse(event.data);
         } catch {
-          addSystemMessage("Received an unreadable server message.");
+          addSystemMessage(
+            "Received an unreadable server message."
+          );
           return;
         }
 
@@ -292,7 +324,8 @@ function App() {
             [
               ...new Set(
                 receivedUsers.filter(
-                  (name) => typeof name === "string" && name.trim()
+                  (name) =>
+                    typeof name === "string" && name.trim()
                 )
               ),
             ].sort((a, b) => a.localeCompare(b))
@@ -322,6 +355,7 @@ function App() {
 
           setConnectionError(errorMessage);
           addSystemMessage(errorMessage);
+
           return;
         }
 
@@ -330,7 +364,9 @@ function App() {
 
           addSystemMessage(text, data.timestamp);
 
-          const onlineMatch = text.match(/^Online users:\s*(.*)$/i);
+          const onlineMatch = text.match(
+            /^Online users:\s*(.*)$/i
+          );
 
           if (onlineMatch) {
             const names = onlineMatch[1]
@@ -341,7 +377,9 @@ function App() {
             setMembers(names);
           }
 
-          const joinedMatch = text.match(/^(.+?) joined the chat$/i);
+          const joinedMatch = text.match(
+            /^(.+?) joined the chat$/i
+          );
 
           if (joinedMatch) {
             setMembers((previous) => {
@@ -350,7 +388,8 @@ function App() {
               if (
                 previous.some(
                   (member) =>
-                    normalizeName(member) === normalizeName(name)
+                    normalizeName(member) ===
+                    normalizeName(name)
                 )
               ) {
                 return previous;
@@ -362,7 +401,9 @@ function App() {
             });
           }
 
-          const disconnectedMatch = text.match(/^(.+?) disconnected$/i);
+          const disconnectedMatch = text.match(
+            /^(.+?) disconnected$/i
+          );
 
           if (disconnectedMatch) {
             const name = disconnectedMatch[1];
@@ -370,7 +411,8 @@ function App() {
             setMembers((previous) =>
               previous.filter(
                 (member) =>
-                  normalizeName(member) !== normalizeName(name)
+                  normalizeName(member) !==
+                  normalizeName(name)
               )
             );
           }
@@ -401,13 +443,19 @@ function App() {
         if (data.type === "private") {
           const sender = data.username || "Unknown";
           const currentUsername = usernameRef.current;
-          const recipient = data.recipient || currentUsername;
+          const recipient =
+            data.recipient || currentUsername;
 
           const isOwnMessage =
-            normalizeName(sender) === normalizeName(currentUsername);
+            normalizeName(sender) ===
+            normalizeName(currentUsername);
 
-          const otherUser = isOwnMessage ? recipient : sender;
-          const conversationKey = getConversationKey(otherUser);
+          const otherUser = isOwnMessage
+            ? recipient
+            : sender;
+
+          const conversationKey =
+            getConversationKey(otherUser);
 
           rememberConversation(otherUser);
 
@@ -420,15 +468,16 @@ function App() {
             outgoing: isOwnMessage,
           });
 
-          // Do not count our own messages as unread.
-          // Messages arriving in the open conversation are immediately read.
+          // Ignore our own messages when calculating unread counts.
+          // Messages received in the open conversation are read.
           if (
             !isOwnMessage &&
             activeConversationRef.current !== conversationKey
           ) {
             setUnreadCounts((previous) => ({
               ...previous,
-              [conversationKey]: (previous[conversationKey] || 0) + 1,
+              [conversationKey]:
+                (previous[conversationKey] || 0) + 1,
             }));
           }
 
@@ -450,16 +499,24 @@ function App() {
         if (socketRef.current !== socket) return;
 
         socketRef.current = null;
+
         setConnected(false);
         setConnecting(false);
         setMembers([]);
 
         if (!intentionalCloseRef.current) {
-          addSystemMessage("Disconnected from CloudChat gateway.");
+          addSystemMessage(
+            "Disconnected from CloudChat gateway."
+          );
         }
       };
     },
-    [activeRoom, addMessage, addSystemMessage, rememberConversation]
+    [
+      activeRoom,
+      addMessage,
+      addSystemMessage,
+      rememberConversation,
+    ]
   );
 
   const disconnect = useCallback(() => {
@@ -522,8 +579,6 @@ function App() {
     setActiveDirectMessage(name);
     setActiveTab("messages");
 
-    // Update synchronously to avoid counting incoming messages as unread
-    // during the render transition.
     activeConversationRef.current = key;
 
     markConversationRead(name);
@@ -531,10 +586,15 @@ function App() {
   };
 
   const openMemberConversation = (name) => {
-    if (normalizeName(name) === normalizeName(username)) return;
+    if (normalizeName(name) === normalizeName(username)) {
+      return;
+    }
 
     selectConversation(name);
-    setTimeout(() => inputRef.current?.focus(), 0);
+
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 0);
   };
 
   const sendMessage = (event) => {
@@ -544,8 +604,13 @@ function App() {
 
     if (!text) return;
 
-    if (!connected || socketRef.current?.readyState !== WebSocket.OPEN) {
-      setConnectionError("Connect to CloudChat before sending messages.");
+    if (
+      !connected ||
+      socketRef.current?.readyState !== WebSocket.OPEN
+    ) {
+      setConnectionError(
+        "Connect to CloudChat before sending messages."
+      );
       return;
     }
 
@@ -556,14 +621,18 @@ function App() {
       });
 
       if (sent) setMessageInput("");
+
       return;
     }
 
     if (activeDirectMessage) {
       if (
-        normalizeName(activeDirectMessage) === normalizeName(username)
+        normalizeName(activeDirectMessage) ===
+        normalizeName(username)
       ) {
-        setConnectionError("You cannot send a private message to yourself.");
+        setConnectionError(
+          "You cannot send a private message to yourself."
+        );
         return;
       }
 
@@ -573,18 +642,24 @@ function App() {
       });
 
       if (sent) {
-        addMessage(getConversationKey(activeDirectMessage), {
-          id: createId(),
-          type: "private",
-          username,
-          message: text,
-          timestamp: new Date().toTimeString().slice(0, 8),
-          outgoing: true,
-          pending: true,
-        });
+        addMessage(
+          getConversationKey(activeDirectMessage),
+          {
+            id: createId(),
+            type: "private",
+            username,
+            message: text,
+            timestamp: new Date()
+              .toTimeString()
+              .slice(0, 8),
+            outgoing: true,
+            pending: true,
+          }
+        );
 
         rememberConversation(activeDirectMessage);
         markConversationRead(activeDirectMessage);
+
         setMessageInput("");
       }
 
@@ -606,7 +681,8 @@ function App() {
     }
   };
 
-  const activeTitle = activeDirectMessage || activeRoom;
+  const activeTitle =
+    activeDirectMessage || activeRoom;
 
   const activeDescription = activeDirectMessage
     ? `Private conversation with ${activeDirectMessage}`
@@ -618,10 +694,14 @@ function App() {
           ? "Anything that doesn't fit elsewhere"
           : `Welcome to the #${activeRoom} channel`;
 
-  const totalUnreadCount = Object.values(unreadCounts).reduce(
-    (total, count) => total + count,
-    0
-  );
+  const totalUnreadCount = Object.values(
+    unreadCounts
+  ).reduce((total, count) => total + count, 0);
+
+  const memberCountLabel =
+    `${members.length} ${
+      members.length === 1 ? "member" : "members"
+    } online`;
 
   return (
     <div className="app-shell">
@@ -633,16 +713,23 @@ function App() {
 
           <div className="brand-copy">
             <span className="brand-name">CloudChat</span>
-            <span className="brand-subtitle">TEAM WORKSPACE</span>
+            <span className="brand-subtitle">
+              TEAM WORKSPACE
+            </span>
           </div>
         </div>
 
-        <button className="workspace-selector" type="button">
+        <button
+          className="workspace-selector"
+          type="button"
+        >
           <div className="workspace-avatar">C</div>
 
           <div className="workspace-info">
             <strong>CloudChat HQ</strong>
-            <span>{connected ? "Connected" : "Workspace"}</span>
+            <span>
+              {connected ? "Connected" : "Workspace"}
+            </span>
           </div>
 
           <MoreHorizontal size={18} />
@@ -650,19 +737,25 @@ function App() {
 
         <label className="search-box">
           <Search size={16} />
+
           <input
             type="search"
             placeholder="Search..."
             value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
+            onChange={(event) =>
+              setSearchQuery(event.target.value)
+            }
           />
+
           <kbd>/</kbd>
         </label>
 
         <div className="sidebar-tabs">
           <button
             type="button"
-            className={activeTab === "channels" ? "active" : ""}
+            className={
+              activeTab === "channels" ? "active" : ""
+            }
             onClick={() => {
               setActiveTab("channels");
               setActiveDirectMessage(null);
@@ -675,7 +768,9 @@ function App() {
 
           <button
             type="button"
-            className={activeTab === "messages" ? "active" : ""}
+            className={
+              activeTab === "messages" ? "active" : ""
+            }
             onClick={() => setActiveTab("messages")}
           >
             <MessageCircle size={16} />
@@ -683,7 +778,9 @@ function App() {
 
             {totalUnreadCount > 0 && (
               <span className="tab-count">
-                {totalUnreadCount > 99 ? "99+" : totalUnreadCount}
+                {totalUnreadCount > 99
+                  ? "99+"
+                  : totalUnreadCount}
               </span>
             )}
           </button>
@@ -710,7 +807,9 @@ function App() {
                     .toLowerCase()
                     .replace(/\s+/g, "-");
 
-                  if (!/^[a-z0-9_-]{1,30}$/.test(cleanRoom)) {
+                  if (
+                    !/^[a-z0-9_-]{1,30}$/.test(cleanRoom)
+                  ) {
                     window.alert(
                       "Use 1–30 letters, numbers, hyphens, or underscores."
                     );
@@ -725,7 +824,8 @@ function App() {
 
                   setMessagesByRoom((previous) => ({
                     ...previous,
-                    [cleanRoom]: previous[cleanRoom] || [],
+                    [cleanRoom]:
+                      previous[cleanRoom] || [],
                   }));
 
                   selectRoom(cleanRoom);
@@ -741,7 +841,8 @@ function App() {
                   type="button"
                   key={room}
                   className={`channel-item ${
-                    activeRoom === room && !activeDirectMessage
+                    activeRoom === room &&
+                    !activeDirectMessage
                       ? "active"
                       : ""
                   }`}
@@ -753,7 +854,9 @@ function App() {
               ))}
 
               {filteredRooms.length === 0 && (
-                <p className="empty-state">No matching channels.</p>
+                <p className="empty-state">
+                  No matching channels.
+                </p>
               )}
             </div>
           </div>
@@ -766,21 +869,28 @@ function App() {
             <div className="channel-list">
               {filteredConversations.map((name) => {
                 const unread =
-                  unreadCounts[getConversationKey(name)] || 0;
+                  unreadCounts[getConversationKey(name)] ||
+                  0;
 
                 return (
                   <button
                     type="button"
                     key={normalizeName(name)}
                     className={`channel-item dm-item ${
-                      normalizeName(activeDirectMessage || "") ===
-                      normalizeName(name)
+                      normalizeName(
+                        activeDirectMessage || ""
+                      ) === normalizeName(name)
                         ? "active"
                         : ""
                     }`}
-                    onClick={() => selectConversation(name)}
+                    onClick={() =>
+                      selectConversation(name)
+                    }
                   >
-                    <span className="small-avatar">{getInitials(name)}</span>
+                    <span className="small-avatar">
+                      {getInitials(name)}
+                    </span>
+
                     <span>{name}</span>
 
                     {unread > 0 ? (
@@ -796,8 +906,8 @@ function App() {
 
               {filteredConversations.length === 0 && (
                 <p className="empty-state">
-                  No conversations yet. Select someone from Members to start
-                  a private chat.
+                  No conversations yet. Select someone from
+                  Members to start a private chat.
                 </p>
               )}
 
@@ -810,10 +920,16 @@ function App() {
                   type="button"
                   className="channel-item dm-item"
                   key={normalizeName(name)}
-                  onClick={() => openMemberConversation(name)}
+                  onClick={() =>
+                    openMemberConversation(name)
+                  }
                 >
-                  <span className="small-avatar">{getInitials(name)}</span>
+                  <span className="small-avatar">
+                    {getInitials(name)}
+                  </span>
+
                   <span>{name}</span>
+
                   <span className="online-dot" />
                 </button>
               ))}
@@ -822,7 +938,9 @@ function App() {
         )}
 
         <div className="sidebar-bottom">
-          <div className="profile-avatar">{getInitials(username || "G")}</div>
+          <div className="profile-avatar">
+            {getInitials(username || "G")}
+          </div>
 
           <div className="profile-info">
             <strong>{username || "Guest"}</strong>
@@ -837,7 +955,9 @@ function App() {
               if (connected) {
                 disconnect();
               } else {
-                document.getElementById("username-input")?.focus();
+                document
+                  .getElementById("username-input")
+                  ?.focus();
               }
             }}
           >
@@ -859,25 +979,58 @@ function App() {
 
             <div>
               <h1>
-                {activeDirectMessage ? activeTitle : `#${activeTitle}`}
+                {activeDirectMessage
+                  ? activeTitle
+                  : `#${activeTitle}`}
               </h1>
+
               <p>{activeDescription}</p>
             </div>
           </div>
 
-          <div className="header-actions">
+          <div
+            className="header-actions"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "16px",
+            }}
+          >
             <div
               className={`connection-status ${
-                connected ? "connected" : "disconnected"
+                connected
+                  ? "connected"
+                  : "disconnected"
               }`}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
             >
-              {connected ? <Wifi size={15} /> : <WifiOff size={15} />}
-              <span>{connected ? "Live" : "Offline"}</span>
+              {connected ? (
+                <Wifi size={15} />
+              ) : (
+                <WifiOff size={15} />
+              )}
+
+              <span>
+                {connected ? "Live" : "Offline"}
+              </span>
             </div>
 
-            <div className="header-members">
+            <div
+              className="header-members"
+              title="Total connected workspace members"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "7px",
+                whiteSpace: "nowrap",
+              }}
+            >
               <Users size={16} />
-              <span>{members.length}</span>
+              <span>{memberCountLabel}</span>
             </div>
           </div>
         </header>
@@ -886,8 +1039,10 @@ function App() {
           <div className="connection-banner">
             <div className="banner-copy">
               <strong>Connect to CloudChat</strong>
+
               <span>
-                Enter a username to join the workspace and start chatting.
+                Enter a username to join the workspace and
+                start chatting.
               </span>
             </div>
 
@@ -901,7 +1056,9 @@ function App() {
               <input
                 id="username-input"
                 value={usernameInput}
-                onChange={(event) => setUsernameInput(event.target.value)}
+                onChange={(event) =>
+                  setUsernameInput(event.target.value)
+                }
                 placeholder="Your username"
                 maxLength={24}
                 autoComplete="nickname"
@@ -909,7 +1066,9 @@ function App() {
               />
 
               <button type="submit" disabled={connecting}>
-                {connecting ? "Connecting..." : "Connect"}
+                {connecting
+                  ? "Connecting..."
+                  : "Connect"}
               </button>
             </form>
           </div>
@@ -918,6 +1077,7 @@ function App() {
         {connectionError && (
           <div className="error-banner">
             <span>{connectionError}</span>
+
             <button
               type="button"
               onClick={() => setConnectionError("")}
@@ -938,8 +1098,8 @@ function App() {
               <h2>Welcome to #{activeRoom}!</h2>
 
               <p>
-                This is the beginning of the <strong>#{activeRoom}</strong>{" "}
-                channel.
+                This is the beginning of the{" "}
+                <strong>#{activeRoom}</strong> channel.
               </p>
 
               <div className="divider">
@@ -950,23 +1110,31 @@ function App() {
             </div>
           )}
 
-          {activeDirectMessage && activeMessages.length === 0 && (
-            <div className="channel-intro direct-intro">
-              <div className="intro-hash">
-                <MessageCircle size={26} />
+          {activeDirectMessage &&
+            activeMessages.length === 0 && (
+              <div className="channel-intro direct-intro">
+                <div className="intro-hash">
+                  <MessageCircle size={26} />
+                </div>
+
+                <h2>
+                  Chat with {activeDirectMessage}
+                </h2>
+
+                <p>
+                  This is the beginning of your private
+                  conversation. Say hello!
+                </p>
               </div>
-
-              <h2>Chat with {activeDirectMessage}</h2>
-
-              <p>
-                This is the beginning of your private conversation. Say hello!
-              </p>
-            </div>
-          )}
+            )}
 
           {systemMessages.map((message) => (
-            <div className="system-message" key={message.id}>
+            <div
+              className="system-message"
+              key={message.id}
+            >
               <span>{message.message}</span>
+
               {message.timestamp && (
                 <time>{formatTime(message.timestamp)}</time>
               )}
@@ -975,7 +1143,8 @@ function App() {
 
           {activeMessages.map((message) => {
             const isOwnMessage =
-              normalizeName(message.username) === normalizeName(username);
+              normalizeName(message.username) ===
+              normalizeName(username);
 
             return (
               <article
@@ -986,16 +1155,49 @@ function App() {
               >
                 <div
                   className={`message-avatar ${
-                    message.type === "private" ? "private-avatar" : ""
+                    message.type === "private"
+                      ? "private-avatar"
+                      : ""
                   }`}
                 >
                   {getInitials(message.username)}
                 </div>
 
-                <div className="message-content">
-                  <div className="message-meta">
-                    <strong>{message.username}</strong>
-                    <time>{formatTime(message.timestamp)}</time>
+                <div
+                  className="message-content"
+                  style={{
+                    minWidth: 0,
+                    flex: 1,
+                  }}
+                >
+                  <div
+                    className="message-meta"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      width: "100%",
+                      minWidth: 0,
+                    }}
+                  >
+                    <strong
+                      style={{
+                        flexShrink: 0,
+                      }}
+                    >
+                      {message.username}
+                    </strong>
+
+                    <time
+                      style={{
+                        marginLeft: "auto",
+                        flexShrink: 0,
+                        whiteSpace: "nowrap",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {formatTime(message.timestamp)}
+                    </time>
 
                     {message.type === "private" && (
                       <span className="private-label">
@@ -1008,7 +1210,9 @@ function App() {
                   <p>{message.message}</p>
 
                   {message.pending && (
-                    <span className="message-delivery-status">Sent</span>
+                    <span className="message-delivery-status">
+                      Sent
+                    </span>
                   )}
                 </div>
               </article>
@@ -1019,7 +1223,10 @@ function App() {
         </section>
 
         <div className="composer-area">
-          <form className="composer" onSubmit={sendMessage}>
+          <form
+            className="composer"
+            onSubmit={sendMessage}
+          >
             <button
               type="button"
               className="composer-plus"
@@ -1038,7 +1245,9 @@ function App() {
             <input
               ref={inputRef}
               value={messageInput}
-              onChange={(event) => setMessageInput(event.target.value)}
+              onChange={(event) =>
+                setMessageInput(event.target.value)
+              }
               onKeyDown={handleComposerKeyDown}
               placeholder={
                 connected
@@ -1055,7 +1264,9 @@ function App() {
             <button
               type="submit"
               className="send-button"
-              disabled={!connected || !messageInput.trim()}
+              disabled={
+                !connected || !messageInput.trim()
+              }
               title="Send message"
               aria-label="Send message"
             >
@@ -1067,6 +1278,7 @@ function App() {
             <span>
               <kbd>Enter</kbd> to send
             </span>
+
             <span>{messageInput.length}/2000</span>
           </div>
         </div>
@@ -1079,21 +1291,27 @@ function App() {
             <p>People in your workspace</p>
           </div>
 
-          <span className="members-count">{members.length}</span>
+          <span className="members-count">
+            {members.length}
+          </span>
         </div>
 
         <div className="member-group">
           <div className="member-group-heading">
             <span className="online-indicator" />
             <span>ONLINE</span>
-            <span className="group-count">{members.length}</span>
+
+            <span className="group-count">
+              {members.length}
+            </span>
           </div>
 
           {members.length > 0 ? (
             <div className="member-list">
               {members.map((name) => {
                 const isSelf =
-                  normalizeName(name) === normalizeName(username);
+                  normalizeName(name) ===
+                  normalizeName(username);
 
                 return (
                   <button
@@ -1102,7 +1320,9 @@ function App() {
                       isSelf ? "current-user" : ""
                     }`}
                     key={normalizeName(name)}
-                    onClick={() => openMemberConversation(name)}
+                    onClick={() =>
+                      openMemberConversation(name)
+                    }
                     title={
                       isSelf
                         ? "You"
@@ -1111,12 +1331,18 @@ function App() {
                   >
                     <div className="member-avatar">
                       {getInitials(name)}
+
                       <span className="member-online-dot" />
                     </div>
 
                     <div className="member-info">
                       <strong>{name}</strong>
-                      <span>{isSelf ? "You · Online" : "Online"}</span>
+
+                      <span>
+                        {isSelf
+                          ? "You · Online"
+                          : "Online"}
+                      </span>
                     </div>
 
                     {!isSelf && (
@@ -1138,8 +1364,8 @@ function App() {
               <strong>No members yet</strong>
 
               <p>
-                Online users will appear here when the server sends the user
-                list.
+                Online users will appear here when the
+                server sends the user list.
               </p>
 
               {!connected && (
@@ -1159,16 +1385,27 @@ function App() {
 
             <div>
               <strong>CloudChat Server</strong>
-              <span>Python TCP sockets · Multi-threaded messaging</span>
+
+              <span>
+                Python TCP sockets · Multi-threaded
+                messaging
+              </span>
             </div>
           </div>
 
           <div className="server-card-status">
             <span
-              className={connected ? "status-dot online" : "status-dot"}
+              className={
+                connected
+                  ? "status-dot online"
+                  : "status-dot"
+              }
             />
+
             <span>
-              {connected ? "Connected to gateway" : "Not connected"}
+              {connected
+                ? "Connected to gateway"
+                : "Not connected"}
             </span>
           </div>
         </div>

@@ -1,4 +1,5 @@
 import json
+import re
 import socket
 import threading
 from datetime import datetime
@@ -13,6 +14,9 @@ clients = {}
 rooms = {"general": set()}
 
 lock = threading.RLock()
+
+# Accept ordinary usernames, not HTTP request lines or header values.
+USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,24}$")
 
 
 def timestamp():
@@ -63,10 +67,12 @@ def broadcast_all(data):
 
 def broadcast_user_list():
     """Synchronize the online-user list across all clients."""
+    users = get_online_users()
+
     event = {
         "type": "users",
-        "users": get_online_users(),
-        "count": len(get_online_users()),
+        "users": users,
+        "count": len(users),
         "timestamp": timestamp(),
     }
 
@@ -99,17 +105,12 @@ def handle_client(client, address):
         # The first line received from a client is its username.
         username = reader.readline().strip()
 
-        if not username:
-            return
-
-        if len(username) > 24 or any(
-            char in username for char in "\r\n"
-        ):
-            send_message(
-                client,
-                system_message(
-                    "Username must contain 1–24 characters."
-                ),
+        # Reject HTTP requests, header values, and malformed usernames
+        # before they can be registered or broadcast to chat users.
+        if not USERNAME_PATTERN.fullmatch(username):
+            print(
+                f"[REJECTED] Invalid username/request from "
+                f"{address}: {username[:80]!r}"
             )
             return
 
@@ -139,13 +140,11 @@ def handle_client(client, address):
             system_message(f"Welcome {username}!"),
         )
 
-        # Notify members of the default room.
         broadcast(
             system_message(f"{username} joined the chat"),
             current_room,
         )
 
-        # Send current state to all connected clients.
         broadcast_user_list()
         broadcast_room_list()
 
@@ -217,7 +216,6 @@ def handle_client(client, address):
                     )
                     continue
 
-                # Deliver the private message to the recipient.
                 delivered = send_message(
                     target_client,
                     {
@@ -306,7 +304,6 @@ def handle_client(client, address):
                     f"#{previous_room} -> #{current_room}"
                 )
 
-                # Notify clients if a new room was created.
                 if room_created:
                     broadcast_room_list()
 
@@ -361,7 +358,6 @@ def handle_client(client, address):
                 current_room,
             )
 
-            # Remove the disconnected user from every Members panel.
             broadcast_user_list()
 
             print(f"[DISCONNECTED] {username}")

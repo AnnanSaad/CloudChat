@@ -16,7 +16,8 @@ import {
 } from "lucide-react";
 import "./App.css";
 
-const WS_URL = "ws://127.0.0.1:8765";
+const WS_URL =
+  import.meta.env.VITE_WS_URL || "ws://127.0.0.1:8765";
 const INITIAL_ROOMS = ["general", "developers", "random"];
 
 const INITIAL_MESSAGES = {
